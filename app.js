@@ -153,8 +153,8 @@
     try {
       let res;
       if (method === 'GET') {
-        const q = new URLSearchParams(Object.assign({ token: cfg.token }, params)).toString();
-        res = await fetch(cfg.url + (cfg.url.includes('?') ? '&' : '?') + q, { signal: ctl.signal, redirect: 'follow', cache: 'no-store' });
+        const q = new URLSearchParams(Object.assign({ token: cfg.token }, params, { _: Date.now() })).toString();
+        res = await fetch(cfg.url + (cfg.url.includes('?') ? '&' : '?') + q, { signal: ctl.signal });
       } else {
         res = await fetch(cfg.url, { method: 'POST', signal: ctl.signal, redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ token: cfg.token }, params)) });
       }
@@ -288,7 +288,7 @@
       S.cfg = { url: cfg.url, token: cfg.token, who: who.trim().slice(0, 40) }; LS.set('cfg', S.cfg); S.setupError = '';
       history.replaceState(null, '', location.pathname);
       boot();
-    } catch (e) { S.setupError = e.server ? errText(e) : t('conn_fail'); renderSetup(code, who); }
+    } catch (e) { S.setupError = e.server ? errText(e) : t('conn_fail') + ' (' + String(e && e.message || e).slice(0, 80) + ')'; renderSetup(code, who); }
   }
 
   // ---------- toast / dialog ----------
