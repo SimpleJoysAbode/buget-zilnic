@@ -4,7 +4,7 @@
   // ---------- i18n ----------
   const T = {
     ro: {
-      app: 'Buget zilnic', add: 'Adaugă', month: 'Luna', year: 'Anul',
+      app: 'Buget zilnic', add: 'Adaugă', stats: 'Statistici', month: 'Luna', year: 'Anul',
       expense: 'Cheltuială', income: 'Venit', today: 'Azi', yesterday: 'Ieri',
       notePh: 'Notă (opțional)', total: 'Total', save_expense: 'Adaugă cheltuială', save_income: 'Adaugă venitul',
       saved: 'Salvat în Google Sheets', queued: 'Salvat pe telefon, se trimite când ai internet',
@@ -19,7 +19,7 @@
       year_total: 'Cheltuit în an', year_income: 'Venit în an', avg_month: 'Medie lunară', ytd: 'De la începutul anului',
       settings: 'Setări', language: 'Limba', your_name: 'Numele tău', name_help: 'Apare lângă fiecare sumă adăugată de tine.',
       connection: 'Conexiune', test: 'Testează conexiunea', conn_ok: 'Conectat la Google Sheets', conn_bad: 'Nu mă pot conecta',
-      share_code: 'Copiază codul de configurare', copied: 'Cod copiat. Lipește-l pe celălalt telefon.', disconnect: 'Deconectează telefonul', close: 'Închide',
+      share_code: 'Copiază linkul de configurare', copied: 'Link copiat. Deschide-l în Safari pe celălalt telefon.', a2hs: 'Pentru ecranul principal: în Safari apasă Partajează, apoi Adaugă pe ecranul principal. Aplicația se conectează singură.', connecting: 'Se conectează…', disconnect: 'Deconectează telefonul', close: 'Închide',
       setup_title: 'Buget zilnic', setup_p: 'Scrie cheltuielile direct în tabelul tău din Google Sheets.',
       code: 'Cod de configurare', code_ph: 'Lipește codul aici', connect: 'Conectează', paste: 'Lipește', code_bad: 'Codul nu pare corect.',
       name_req: 'Scrie-ți numele.', conn_fail: 'Nu am putut verifica conexiunea. Verifică internetul și codul.',
@@ -30,7 +30,7 @@
       invalid_expr: 'Verifică suma', today_label: 'Azi', eur: 'EUR'
     },
     en: {
-      app: 'Daily budget', add: 'Add', month: 'Month', year: 'Year',
+      app: 'Daily budget', add: 'Add', stats: 'Insights', month: 'Month', year: 'Year',
       expense: 'Expense', income: 'Income', today: 'Today', yesterday: 'Yesterday',
       notePh: 'Note (optional)', total: 'Total', save_expense: 'Add expense', save_income: 'Add income',
       saved: 'Saved to Google Sheets', queued: 'Saved on this phone, sending when you are online',
@@ -45,7 +45,7 @@
       year_total: 'Spent this year', year_income: 'Income this year', avg_month: 'Monthly average', ytd: 'Year to date',
       settings: 'Settings', language: 'Language', your_name: 'Your name', name_help: 'Shown next to every amount you add.',
       connection: 'Connection', test: 'Test connection', conn_ok: 'Connected to Google Sheets', conn_bad: 'Cannot connect',
-      share_code: 'Copy setup code', copied: 'Code copied. Paste it on the other phone.', disconnect: 'Disconnect this phone', close: 'Close',
+      share_code: 'Copy setup link', copied: 'Link copied. Open it in Safari on the other phone.', a2hs: 'For the Home Screen: in Safari tap Share, then Add to Home Screen. The app connects itself.', connecting: 'Connecting…', disconnect: 'Disconnect this phone', close: 'Close',
       setup_title: 'Daily budget', setup_p: 'Write expenses straight into your Google Sheets table.',
       code: 'Setup code', code_ph: 'Paste the code here', connect: 'Connect', paste: 'Paste', code_bad: 'That code does not look right.',
       name_req: 'Enter your name.', conn_fail: 'Could not verify the connection. Check internet and the code.',
@@ -72,7 +72,7 @@
     days: LS.get('days', {}),                // cache: date -> day
     queue: LS.get('queue', []),              // pending adds
     months: LS.get('months', {}), years: LS.get('years', {}),
-    month: todayIso().slice(0, 7), yearSel: new Date().getFullYear(),
+    month: todayIso().slice(0, 7), yearSel: new Date().getFullYear(), all: LS.get('all', null), sv: LS.get('sv', 'day'),
     sync: 'ok', busy: false, loading: {}, confirmDel: null, online: navigator.onLine !== false, monthStale: false, creating: false, setupError: '', exprError: false
   };
   const t = k => (T[S.lang][k] !== undefined ? T[S.lang][k] : T.ro[k]);
@@ -240,29 +240,30 @@
       if (e.server && String(e.message).startsWith('month_missing')) S.days[iso] = { missing: true, date: iso };
       else if (e.net) S.sync = 'off';
     }
-    if (S.date === iso && S.tab === 'add') renderDay(); renderHeader();
+    if (S.date === iso && S.tab === 'add') renderDay(); else if (S.tab === 'stats' && S.sv === 'day' && S.date === iso) renderStats(); renderHeader();
   }
   async function loadMonth(ym) {
     if (!S.cfg) return;
-    S.loading.month = true; if (S.tab === 'month') renderMonth();
+    S.loading.month = true; if (S.tab === 'stats') renderStats();
     try {
-      const r = await api('GET', { action: 'month', month: ym });
+      const r = await api('GET', { action: 'month', month: ym, today: todayIso() });
       S.months[ym] = r.month; LS.set('months', S.months); S.monthStale = false;
     } catch (e) { if (e.net) { S.monthStale = true; S.sync = 'off'; } }
-    S.loading.month = false; if (S.tab === 'month' && S.month === ym) renderMonth(); renderHeader();
+    S.loading.month = false; if (S.tab === 'stats') renderStats(); renderHeader();
   }
-  async function loadYear(y) {
+  async function loadAll() {
     if (!S.cfg) return;
-    S.loading.year = true; if (S.tab === 'year') renderYear();
+    S.loading.all = true; if (S.tab === 'stats' && !S.all) renderStats();
     try {
-      const r = await api('GET', { action: 'year', year: y });
-      S.years[y] = r.year; LS.set('years', S.years); S.monthStale = false;
-    } catch (e) { if (e.net) { S.monthStale = true; S.sync = 'off'; } }
-    S.loading.year = false; if (S.tab === 'year' && S.yearSel === y) renderYear(); renderHeader();
+      const r = await api('GET', { action: 'all', today: todayIso() });
+      S.all = r.all; LS.set('all', S.all); S.monthStale = false; S.allError = false;
+    } catch (e) { S.allError = true; if (e.net) { S.monthStale = true; S.sync = 'off'; } }
+    S.loading.all = false; if (S.tab === 'stats') renderStats(); renderHeader();
   }
   function refreshCurrent() {
     if (!S.cfg) return;
-    if (S.tab === 'add') loadDay(S.date); else if (S.tab === 'month') loadMonth(S.month); else loadYear(S.yearSel);
+    if (S.tab === 'add') loadDay(S.date);
+    else { loadAll(); if (S.sv === 'month') loadMonth(S.month); else if (S.sv === 'day') loadDay(S.date); }
   }
 
   // ---------- actions ----------
@@ -289,7 +290,7 @@
     S.creating = true; render();
     try { await api('POST', { action: 'createMonth', month: ym }); toast(t('month_created'), 'success'); delete S.days[S.date]; }
     catch (e) { toast(errText(e), 'error'); }
-    S.creating = false; S.blockedMonth = null;
+    S.creating = false; S.blockedMonth = null; delete S.months[ym];
     await flushQueue(); refreshCurrent(); render();
   }
 
@@ -304,6 +305,26 @@
       return { url: o.u, token: o.t };
     } catch (e) { return null; }
   }
+  // The setup code stays in the page address (after the #, which is never sent to any server). iPhones start a
+  // Home Screen app with its own empty storage but from this very address, so it connects itself on first open.
+  function keepInUrl() {
+    if (!S.cfg) return;
+    try { history.replaceState(null, '', location.pathname + location.search + '#s=' + encodeCode(S.cfg) + '&n=' + encodeURIComponent(S.cfg.who || '')); } catch (e) {}
+    updateManifest();
+  }
+  // iPhone: no manifest at all, so Add to Home Screen keeps the exact current address. Others: a manifest whose start address is the current one.
+  function updateManifest() {
+    const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    if (ios || !window.Blob || !URL.createObjectURL) return;
+    try {
+      const abs = p => new URL(p, location.href).href;
+      const man = { name: 'Buget zilnic', short_name: 'Buget', start_url: location.href, scope: abs('./'), display: 'standalone', background_color: '#FFFFFF', theme_color: '#FFFFFF',
+        icons: [{ src: abs('icons/icon-192.png'), sizes: '192x192', type: 'image/png' }, { src: abs('icons/icon-512.png'), sizes: '512x512', type: 'image/png' }, { src: abs('icons/icon-512-maskable.png'), sizes: '512x512', type: 'image/png', purpose: 'maskable' }] };
+      let l = document.querySelector('link[rel="manifest"]'); if (!l) { l = document.createElement('link'); l.rel = 'manifest'; document.head.appendChild(l); }
+      l.href = URL.createObjectURL(new Blob([JSON.stringify(man)], { type: 'application/manifest+json' }));
+    } catch (e) {}
+  }
+  function shareLink() { return location.origin + location.pathname + '#s=' + encodeCode(S.cfg); }
   async function connect(code, who) {
     const cfg = decodeCode(code);
     if (!cfg) { S.setupError = t('code_bad'); renderSetup(code, who); return; }
@@ -312,7 +333,7 @@
     try {
       await api('GET', { action: 'ping' }, { cfg, timeout: 20000 });
       S.cfg = { url: cfg.url, token: cfg.token, who: who.trim().slice(0, 40) }; LS.set('cfg', S.cfg); S.setupError = '';
-      history.replaceState(null, '', location.pathname);
+      keepInUrl();
       boot();
     } catch (e) { S.setupError = e.server ? errText(e) : t('conn_fail') + ' (' + String(e && e.message || e).slice(0, 80) + ')'; renderSetup(code, who); }
   }
@@ -333,15 +354,15 @@
       <div class="grp"><label class="field-label" for="whoIn">${esc(t('your_name'))}</label><input class="field" id="whoIn" value="${esc(S.cfg.who)}" maxlength="40" autocomplete="off"><div class="help">${esc(t('name_help'))}</div></div>
       <div class="grp"><span class="field-label">${esc(t('connection'))}</span>
         <button class="btn secondary" id="testBtn">${esc(t('test'))}</button><div class="help" id="testRes" role="status"></div>
-        <div style="height:8px"></div><button class="btn secondary" id="shareBtn">${esc(t('share_code'))}</button></div>
+        <div style="height:8px"></div><button class="btn secondary" id="shareBtn">${esc(t('share_code'))}</button><div class="help" style="margin-top:8px">${esc(t('a2hs'))}</div></div>
       <div class="row2"><button class="btn danger" id="discBtn">${esc(t('disconnect'))}</button><button class="btn primary" id="closeBtn">${esc(t('close'))}</button></div>
       <div class="help" style="margin-top:12px">${esc(t('ver'))} 1.0</div></div></div>`;
     root.querySelector('#scrim').addEventListener('click', e => { if (e.target.id === 'scrim') closeDialog(); });
-    root.querySelector('#closeBtn').onclick = () => { const w = root.querySelector('#whoIn').value.trim(); if (w) { S.cfg.who = w.slice(0, 40); LS.set('cfg', S.cfg); } closeDialog(); render(); };
+    root.querySelector('#closeBtn').onclick = () => { const w = root.querySelector('#whoIn').value.trim(); if (w) { S.cfg.who = w.slice(0, 40); LS.set('cfg', S.cfg); keepInUrl(); } closeDialog(); render(); };
     root.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { S.lang = b.dataset.lang; LS.set('lang', S.lang); document.documentElement.lang = S.lang; closeDialog(); render(); openSettings(); });
     root.querySelector('#testBtn').onclick = async () => { const el = root.querySelector('#testRes'); el.textContent = '…'; try { await api('GET', { action: 'ping' }); el.textContent = '✓ ' + t('conn_ok'); } catch (e) { el.textContent = '✕ ' + t('conn_bad'); } };
-    root.querySelector('#shareBtn').onclick = async () => { const code = encodeCode(S.cfg); try { await navigator.clipboard.writeText(code); toast(t('copied'), 'success'); } catch (e) { window.prompt(t('share_code'), code); } };
-    root.querySelector('#discBtn').onclick = () => { if (S.queue.length && !confirm('Ai ' + S.queue.length + ' sume netrimise. Sigur deconectezi?')) return; LS.del('cfg'); LS.del('days'); LS.del('queue'); LS.del('months'); LS.del('years'); location.reload(); };
+    root.querySelector('#shareBtn').onclick = async () => { const link = shareLink(); try { await navigator.clipboard.writeText(link); toast(t('copied'), 'success'); } catch (e) { window.prompt(t('share_code'), link); } };
+    root.querySelector('#discBtn').onclick = () => { if (S.queue.length && !confirm('Ai ' + S.queue.length + ' sume netrimise. Sigur deconectezi?')) return; LS.del('cfg'); LS.del('days'); LS.del('queue'); LS.del('months'); LS.del('years'); LS.del('all'); location.reload(); };
   }
 
   // ---------- rendering ----------
@@ -352,12 +373,12 @@
     if (!S.cfg) { renderSetup('', ''); return; }
     app.innerHTML = `<header class="hdr" id="hdr"></header><main id="main"></main>
       <nav class="nav" aria-label="Navigare">
-        ${[['add', 'add-delete', t('add')], ['month', 'calendar', t('month')], ['year', 'bar-chart', t('year')]].map(([k, i, l]) =>
+        ${[['add', 'add-delete', t('add')], ['stats', 'bar-chart', t('stats')]].map(([k, i, l]) =>
           `<button data-tab="${k}" ${S.tab === k ? 'aria-current="page"' : ''}>${ico(i)}<span>${esc(l)}</span></button>`).join('')}
       </nav>`;
     app.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { S.tab = b.dataset.tab; render(); refreshCurrent(); window.scrollTo(0, 0); });
     renderHeader();
-    if (S.tab === 'add') renderAdd(); else if (S.tab === 'month') renderMonth(); else renderYear();
+    if (S.tab === 'add') renderAdd(); else renderStats();
   }
 
   function renderHeader() {
@@ -469,71 +490,51 @@
     });
   }
 
-  // ----- Month view -----
-  function renderMonth() {
+  // ----- Statistics (day / month / year / total) -----
+  const statsCtx = () => ({ lang: S.lang, esc, money, eur, ico, today: todayIso(), rate: (S.all && S.all.rate) || null, fmtDay: fmtShort, fmtMonth, monthName, monthShort: ym => monthName(ym).slice(0, 3).replace('.', '') });
+  function renderStats() {
     const main = document.getElementById('main'); if (!main) return;
-    const m = S.months[S.month];
-    const head = `<div class="mhead"><button class="step" id="pm" aria-label="‹">${ico('arrow-left')}</button><div class="title">${esc(fmtMonth(S.month))}</div><button class="step" id="nm" aria-label="›">${ico('arrow-right')}</button></div>`;
+    const X = statsCtx(), B = window.BZStats.build(X), T = B.T, P = window.BZStats.prep(S.all);
+    const views = [['day', T.day], ['month', T.month], ['year', T.year], ['total', T.total]];
+    const seg = `<div class="seg" role="tablist" aria-label="Statistici">${views.map(([k, l]) => `<button role="tab" data-sv="${k}" aria-selected="${S.sv === k}">${esc(l)}</button>`).join('')}</div>`;
+    let title = '', stepper = true;
+    if (S.sv === 'day') title = S.date === todayIso() ? t('today') + ' · ' + fmtShort(S.date) : fmtShort(S.date);
+    else if (S.sv === 'month') title = fmtMonth(S.month);
+    else if (S.sv === 'year') title = String(S.yearSel);
+    else { title = T.total; stepper = false; }
+    const head = stepper ? `<div class="mhead"><button class="step" id="sPrev" aria-label="‹">${ico('arrow-left')}</button><div class="title">${esc(title)}</div><button class="step" id="sNext" aria-label="›">${ico('arrow-right')}</button></div>` : '';
     let body = '';
-    if (!m) body = S.loading.month ? '<div class="skeleton" style="height:120px"></div><div class="skeleton"></div>' : `<div class="empty">${esc(t('err_generic'))}</div>`;
-    else if (m.missing) body = `<div class="note-box warn">${ico('alert')}<div>${esc(t('month_missing'))}${m.canCreate ? `<div style="margin-top:8px"><button class="btn secondary" id="mkBtn" ${S.creating ? 'disabled' : ''}>${esc(S.creating ? t('creating') : t('create_month'))}</button></div>` : ''}</div></div>`;
-    else {
-      const r = m.rate, today = todayIso();
-      const maxE = Math.max(1, ...m.days.map(d => d.expense));
-      const W = 336, H = 120, bw = W / m.days.length;
-      const bars = m.days.map((d, i) => {
-        const h = Math.max(d.expense ? 2 : 0, (d.expense / maxE) * (H - 14));
-        const isT = d.date === today, isMax = d.expense === maxE && d.expense > 0;
-        const fill = isT ? '#FD5108' : '#B5BCC4';
-        return `<g class="bar" data-date="${d.date}"><rect x="${i * bw}" y="0" width="${bw}" height="${H}" fill="transparent"/><rect x="${i * bw + 1}" y="${H - h}" width="${Math.max(1, bw - 2)}" height="${h}" fill="${fill}" ${isMax && !isT ? 'opacity=".9"' : ''}/></g>`;
-      }).join('');
-      const labels = [1, Math.ceil(m.daysInMonth / 2), m.daysInMonth].map(n => `<text x="${(n - 1) * bw + bw / 2}" y="${H + 14}" font-size="10" fill="#7D7D7D" text-anchor="${n === 1 ? 'start' : n === m.daysInMonth ? 'end' : 'middle'}">${n}</text>`).join('');
-      const list = m.days.filter(d => d.expense || d.income).slice().reverse();
-      body = `
-        <div class="hero"><div class="k">${esc(t('spent'))}</div><div class="v num">${esc(money(m.expense))}</div><div class="s num">${esc(eur(m.expense, r))}</div></div>
-        <div class="kpis">
-          <div class="kpi"><div class="k">${esc(t('earned'))}</div><div class="v num">${esc(money(m.income))}</div><div class="s num">${esc(eur(m.income, r))}</div></div>
-          <div class="kpi"><div class="k">${esc(t('result'))}</div><div class="v num">${esc(money(m.pl))}</div><div class="s num">${esc(eur(m.pl, r))}</div></div>
-          <div class="kpi"><div class="k">${esc(t('avg'))}</div><div class="v num">${esc(money(m.avg))}</div><div class="s num">${esc(m.elapsed ? t('per_day_hint')(m.elapsed) : '')}${r && m.elapsed ? ' · ' + esc(eur(m.avg, r)) : ''}</div></div>
-          <div class="kpi"><div class="k">${esc(m.month === today.slice(0, 7) ? t('balance_now') : t('balance'))}</div><div class="v num">${m.balance == null ? '–' : esc(money(m.balance))}</div><div class="s num">${m.balance == null ? '' : esc(eur(m.balance, r))}</div></div>
-        </div>
-        <div class="chart"><div class="cap">${esc(t('daily_chart'))}</div><svg viewBox="0 0 ${W} ${H + 18}" role="img" aria-label="${esc(t('daily_chart'))}">${bars}<line x1="0" x2="${W}" y1="${H}" y2="${H}" stroke="#DFE3E6"/>${labels}</svg></div>
-        <p class="eyebrow">${esc(t('days'))}</p>
-        ${list.length ? `<div class="rows">${list.map(d => `<button class="row ${d.date === today ? 'today' : ''}" data-date="${d.date}"><span class="d"><b>${esc(fmtShort(d.date))}</b></span><span class="r num">${esc(money(d.expense))}${d.income ? `<small>+ ${esc(money(d.income))}</small>` : ''}</span></button>`).join('')}</div>` : `<div class="empty">${esc(t('no_data_month'))}</div>`}`;
-    }
-    main.innerHTML = head + (S.monthStale ? `<div class="note-box">${ico('wifi')}<div>${esc(t('stale_data'))}</div></div>` : '') + body;
-    main.querySelector('#pm').onclick = () => { S.month = addMonths(S.month, -1); renderMonth(); loadMonth(S.month); };
-    main.querySelector('#nm').onclick = () => { S.month = addMonths(S.month, 1); renderMonth(); loadMonth(S.month); };
-    const mk = main.querySelector('#mkBtn'); if (mk) mk.onclick = () => createMonth(S.month);
-    main.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', () => { S.date = b.dataset.date; S.tab = 'add'; render(); loadDay(S.date); window.scrollTo(0, 0); }));
+    const waiting = !S.all;
+    if (waiting) body = S.loading.all || !S.allError ? '<div class="skeleton" style="height:120px"></div><div class="skeleton"></div>' : `<div class="note-box err">${ico('alert')}<div>${esc(T.err)}<div style="margin-top:8px"><button class="btn secondary" id="retryBtn">${esc(T.retry)}</button></div></div></div>`;
+    else if (S.sv === 'day') {
+      const v = dayView(S.date);
+      if (v.missing) body = missingBox();
+      else body = B.day({ date: S.date, P, items: [...v.expense, ...v.income] }) + `<button class="btn secondary" id="openAdd" style="margin-top:16px">${esc(S.date === todayIso() ? t('add') + ' · ' + t('today').toLowerCase() : t('add') + ' · ' + fmtShort(S.date))}</button>`;
+    } else if (S.sv === 'month') {
+      const det = S.months[S.month];
+      if (det && det.missing) body = missingBox(S.month, det.canCreate);
+      else body = B.month({ ym: S.month, P, detail: det }) || `<div class="empty">${esc(T.no_data)}</div>`;
+    } else if (S.sv === 'year') body = B.year({ year: S.yearSel, P });
+    else body = B.total({ P });
+    function missingBox(ym, can) { const mm = ym || S.date.slice(0, 7); return `<div class="note-box warn">${ico('alert')}<div>${esc(t('month_missing'))}<div style="margin-top:8px"><button class="btn secondary" id="mkBtn" data-ym="${mm}" ${S.creating ? 'disabled' : ''}>${esc(S.creating ? t('creating') : t('create_month'))}</button></div></div></div>`; }
+    main.innerHTML = seg + head + (S.monthStale ? `<div class="note-box">${ico('wifi')}<div>${esc(t('stale_data'))}</div></div>` : '') + body;
+    main.querySelectorAll('[data-sv]').forEach(b => b.onclick = () => { S.sv = b.dataset.sv; LS.set('sv', S.sv); renderStats(); refreshCurrent(); window.scrollTo(0, 0); });
+    const step = d => () => {
+      if (S.sv === 'day') { S.date = addDays(S.date, d); renderStats(); loadDay(S.date); }
+      else if (S.sv === 'month') { S.month = addMonths(S.month, d); renderStats(); loadMonth(S.month); }
+      else { S.yearSel += d; renderStats(); }
+    };
+    const pv = main.querySelector('#sPrev'); if (pv) { pv.onclick = step(-1); main.querySelector('#sNext').onclick = step(1); }
+    const mk = main.querySelector('#mkBtn'); if (mk) mk.onclick = () => createMonth(mk.dataset.ym);
+    const rt = main.querySelector('#retryBtn'); if (rt) rt.onclick = loadAll;
+    const oa = main.querySelector('#openAdd'); if (oa) oa.onclick = () => { S.tab = 'add'; render(); loadDay(S.date); window.scrollTo(0, 0); };
+    const go = (v, fn) => { S.sv = v; LS.set('sv', v); fn(); renderStats(); window.scrollTo(0, 0); };
+    main.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', () => go('day', () => { S.date = b.dataset.date; loadDay(S.date); })));
+    main.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => go('month', () => { S.month = b.dataset.m; loadMonth(S.month); })));
+    main.querySelectorAll('[data-y]').forEach(b => b.addEventListener('click', () => go('year', () => { S.yearSel = Number(b.dataset.y); })));
   }
-
-  // ----- Year view -----
-  function renderYear() {
-    const main = document.getElementById('main'); if (!main) return;
-    const y = S.years[S.yearSel];
-    const head = `<div class="mhead"><button class="step" id="py" aria-label="‹">${ico('arrow-left')}</button><div class="title">${S.yearSel}</div><button class="step" id="ny" aria-label="›">${ico('arrow-right')}</button></div>`;
-    let body = '';
-    if (!y) body = S.loading.year ? '<div class="skeleton" style="height:120px"></div><div class="skeleton"></div>' : `<div class="empty">${esc(t('err_generic'))}</div>`;
-    else {
-      const have = y.months.filter(m => !m.missing);
-      const exp = have.reduce((a, m) => a + m.expense, 0), inc = have.reduce((a, m) => a + m.income, 0);
-      const avgM = have.length ? exp / have.length : 0, r = y.rate;
-      const maxE = Math.max(1, ...have.map(m => m.expense));
-      body = `
-        <div class="hero"><div class="k">${esc(t('year_total'))}</div><div class="v num">${esc(money(exp))}</div><div class="s num">${esc(eur(exp, r))}</div></div>
-        <div class="kpis">
-          <div class="kpi"><div class="k">${esc(t('year_income'))}</div><div class="v num">${esc(money(inc))}</div><div class="s num">${esc(eur(inc, r))}</div></div>
-          <div class="kpi"><div class="k">${esc(t('avg_month'))}</div><div class="v num">${esc(money(avgM))}</div><div class="s num">${esc(eur(avgM, r))}</div></div>
-        </div>
-        <p class="eyebrow">${esc(t('year'))}</p>
-        <div class="rows">${y.months.map(m => m.missing ? '' : `<button class="row mrow ${m.month === todayIso().slice(0, 7) ? 'today' : ''}" data-m="${m.month}"><span class="d"><b>${esc(monthName(m.month))}</b><span class="num">${esc(t('avg'))} ${esc(money(m.avg, false))}</span></span><span class="r num">${esc(money(m.expense))}${m.income ? `<small>+ ${esc(money(m.income))}</small>` : ''}</span><span class="bar" style="width:${(m.expense / maxE) * 100}%"></span></button>`).join('')}</div>`;
-    }
-    main.innerHTML = head + (S.monthStale ? `<div class="note-box">${ico('wifi')}<div>${esc(t('stale_data'))}</div></div>` : '') + body;
-    main.querySelector('#py').onclick = () => { S.yearSel--; renderYear(); loadYear(S.yearSel); };
-    main.querySelector('#ny').onclick = () => { S.yearSel++; renderYear(); loadYear(S.yearSel); };
-    main.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { S.month = b.dataset.m; S.tab = 'month'; render(); loadMonth(S.month); window.scrollTo(0, 0); });
-  }
+  // legacy hooks used by day view re-render after deletes
+  function renderMonth() { if (S.tab === 'stats') renderStats(); }
 
   // ----- Setup -----
   function renderSetup(code, who) {
@@ -557,16 +558,31 @@
   // ---------- boot ----------
   function boot() {
     document.documentElement.lang = S.lang;
+    if (!S.cfg && window.__auto) {
+      const a = window.__auto; window.__auto = null;
+      document.getElementById('app').innerHTML = `<div class="setup">${markSvg}<h1>${esc(t('setup_title'))}</h1><p>${esc(t('connecting'))}</p></div>`;
+      connect(a.code, a.who); return;
+    }
+    keepInUrl();
     render();
-    if (S.cfg) { flushQueue().then(() => loadDay(S.date)); loadDay(S.date); }
+    if (S.cfg) { flushQueue().then(() => { loadDay(S.date); if (S.tab === 'stats') loadAll(); }); loadDay(S.date); }
   }
   // setup code can arrive in the URL (#s=BZ1.xxx) so one tap opens a ready-to-connect phone
   (function fromUrl() {
     const m = /[#&?]s=(BZ1\.[A-Za-z0-9_-]+)/.exec(location.hash + location.search);
-    if (m && !S.cfg) { const cfg = decodeCode(m[1]); if (cfg) { window.__pendingCode = m[1]; } }
+    if (m && !S.cfg) {
+      const cfg = decodeCode(m[1]);
+      if (cfg) {
+        window.__pendingCode = m[1];
+        const n = /[#&]n=([^&]*)/.exec(location.hash);
+        let who = ''; try { who = n ? decodeURIComponent(n[1]) : ''; } catch (e) {}
+        window.__pendingWho = who;
+        if (who.trim()) window.__auto = { code: m[1], who };
+      }
+    }
   })();
   const origRenderSetup = renderSetup;
-  renderSetup = function (code, who) { origRenderSetup(code || window.__pendingCode || '', who); };
+  renderSetup = function (code, who) { origRenderSetup(code || window.__pendingCode || '', who || window.__pendingWho || ''); };
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
   window.__bz = { S, press, evalExpr, decodeCode, encodeCode, money };   // test hook
   boot();
