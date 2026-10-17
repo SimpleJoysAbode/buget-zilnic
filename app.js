@@ -149,23 +149,49 @@
   async function api(method, params, opts) {
     const cfg = (opts && opts.cfg) || S.cfg;
     if (!cfg) throw new Error('no_config');
-    const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), (opts && opts.timeout) || 25000);
-    try {
-      let res;
-      if (method === 'GET') {
-        const q = new URLSearchParams(Object.assign({ token: cfg.token }, params, { _: Date.now() })).toString();
-        res = await fetch(cfg.url + (cfg.url.includes('?') ? '&' : '?') + q, { signal: ctl.signal });
-      } else {
-        res = await fetch(cfg.url, { method: 'POST', signal: ctl.signal, redirect: 'follow', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ token: cfg.token }, params)) });
-      }
-      const txt = await res.text();
-      let data; try { data = JSON.parse(txt); } catch (e) { const er = new Error('bad_response'); er.net = true; throw er; }
-      if (!data.ok) { const er = new Error(data.error || 'error'); er.server = true; throw er; }
-      return data;
-    } catch (e) {
-      if (!e.server && !e.net) { e.net = true; }
-      throw e;
-    } finally { clearTimeout(to); }
+    const timeout = (opts && opts.timeout) || 25000;
+    const fin = data => { if (!data.ok) { const er = new Error(data.error || 'error'); er.server = true; throw er; } return data; };
+    if (!LS.get('jsonp', false)) {
+      const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), timeout);
+      try {
+        let res;
+        if (method === 'GET') {
+          const q = new URLSearchParams(Object.assign({ token: cfg.token }, params, { _: Date.now() })).toString();
+          res = await fetch(cfg.url + (cfg.url.includes('?') ? '&' : '?') + q, { signal: ctl.signal });
+        } else {
+          res = await fetch(cfg.url, { method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(Object.assign({ token: cfg.token }, params)) });
+        }
+        const txt = await res.text();
+        let data; try { data = JSON.parse(txt); } catch (e) { const er = new Error('bad_response'); er.net = true; throw er; }
+        return fin(data);
+      } catch (e) {
+        if (e.server) throw e;
+        if (!(e && e.name === 'AbortError')) {
+          // Some browsers/extensions/networks block cross-site fetch; fall back to a script tag, which they do not.
+          try { const d = await jsonp(cfg, method, params, timeout); LS.set('jsonp', true); return fin(d); }
+          catch (e2) { if (e2.server) throw e2; e2.net = true; e2.message = (e.message || 'fetch') + ' / ' + e2.message; throw e2; }
+        }
+        e.net = true; throw e;
+      } finally { clearTimeout(to); }
+    }
+    try { return fin(await jsonp(cfg, method, params, timeout)); }
+    catch (e) { if (!e.server) e.net = true; throw e; }
+  }
+  // Script-tag transport: everything travels as GET, the answer is a function call (works around blocked fetch).
+  function jsonp(cfg, method, params, timeout) {
+    return new Promise((resolve, reject) => {
+      const name = '__bzcb' + Date.now() + Math.floor(Math.random() * 1e6);
+      const q = { token: cfg.token, callback: name, _: Date.now() };
+      if (method === 'GET') Object.assign(q, params);
+      else { q.action = params.action; const p = Object.assign({}, params); delete p.action; q.payload = JSON.stringify(p); }
+      const sc = document.createElement('script');
+      const done = () => { clearTimeout(tm); delete window[name]; sc.remove(); };
+      const tm = setTimeout(() => { done(); reject(new Error('timeout')); }, timeout);
+      window[name] = d => { done(); resolve(d); };
+      sc.onerror = () => { done(); reject(new Error('script_blocked')); };
+      sc.src = cfg.url + (cfg.url.includes('?') ? '&' : '?') + new URLSearchParams(q).toString();
+      document.head.appendChild(sc);
+    });
   }
   function errText(e) {
     const m = String(e && e.message || '');
