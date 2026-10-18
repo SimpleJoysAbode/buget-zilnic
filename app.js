@@ -72,7 +72,7 @@
     days: LS.get('days', {}),                // cache: date -> day
     queue: LS.get('queue', []),              // pending adds
     months: LS.get('months', {}), years: LS.get('years', {}),
-    month: todayIso().slice(0, 7), yearSel: new Date().getFullYear(), all: LS.get('all', null), sv: LS.get('sv', 'day'),
+    month: todayIso().slice(0, 7), yearSel: new Date().getFullYear(), cm: LS.get('cm', {}), idx: LS.get('idx', []), sv: LS.get('sv', 'day'),
     sync: 'ok', busy: false, loading: {}, confirmDel: null, online: navigator.onLine !== false, monthStale: false, creating: false, setupError: '', exprError: false
   };
   const t = k => (T[S.lang][k] !== undefined ? T[S.lang][k] : T.ro[k]);
@@ -251,13 +251,54 @@
     } catch (e) { if (e.net) { S.monthStale = true; S.sync = 'off'; } }
     S.loading.month = false; if (S.tab === 'stats') renderStats(); renderHeader();
   }
-  async function loadAll() {
+  // Statistics data: a list of month tabs plus compact per-month numbers, kept on the phone.
+  // Only the current and previous month are refreshed each time; older months load once (in parallel) and are reused.
+  function expandMonth(c, today) {
+    const n = c.d.length, ym = c.month, tm = today.slice(0, 7);
+    const elapsed = tm === ym ? Number(today.slice(8, 10)) : (tm < ym ? 0 : n);
+    let inc = 0, exp = 0, spent = 0;
+    c.d.forEach((x, i) => { inc += x[0]; exp += x[1]; if (i < elapsed) spent += x[1]; });
+    let bal = null; for (let i = Math.min(Math.max(elapsed, 1), n) - 1; i >= 0 && bal == null; i--) bal = c.bal[i];
+    const r2 = v => Math.round((v + Number.EPSILON) * 100) / 100;
+    return { month: ym, daysInMonth: n, d: c.d, income: r2(inc), expense: r2(exp), pl: r2(inc - exp), elapsed, avg: elapsed ? r2(spent / elapsed) : 0, balance: bal, rate: c.rate };
+  }
+  function allData() {
+    if (S.legacy && !(S.idx || []).length) return S.legacy;
+    const today = todayIso(), months = [];
+    (S.idx || []).forEach(ym => { const c = S.cm[ym]; if (c) months.push(expandMonth(c, today)); });
+    let rate = null; months.forEach(m => { if (m.rate) rate = m.rate; });
+    return { months, rate };
+  }
+  let allRun = 0;
+  async function loadAll(force) {
     if (!S.cfg) return;
-    S.loading.all = true; if (S.tab === 'stats' && !S.all) renderStats();
+    if (!force && Date.now() - (S.allAt || 0) < 45000) return;      // don't hammer the sheet when switching tabs
+    S.allAt = Date.now(); const run = ++allRun;
+    S.loading.all = true; if (S.tab === 'stats' && !(S.idx || []).length) renderStats();
+    let failed = false;
     try {
-      const r = await api('GET', { action: 'all', today: todayIso() });
-      S.all = r.all; LS.set('all', S.all); S.monthStale = false; S.allError = false;
-    } catch (e) { S.allError = true; if (e.net) { S.monthStale = true; S.sync = 'off'; } }
+      const r = await api('GET', { action: 'index' });
+      S.idx = r.index.months; LS.set('idx', S.idx);
+      const now = Date.now(), tm = todayIso().slice(0, 7), pm = window.BZStats.prevMonth(tm);
+      const need = S.idx.filter(ym => force || !S.cm[ym] || ym >= pm || now - (S.cm[ym].t || 0) > 12 * 3600 * 1000);
+      // newest first, 3 months per request, all requests at once
+      const chunks = []; need.slice().reverse().forEach((ym, i) => { if (i % 3 === 0) chunks.push([]); chunks[chunks.length - 1].push(ym); });
+      await Promise.all(chunks.map(async ch => {
+        try {
+          const q = await api('GET', { action: 'stats', months: ch.join(',') });
+          q.stats.months.forEach(c => { c.t = Date.now(); S.cm[c.month] = c; });
+          LS.set('cm', S.cm); S.monthStale = false;
+          if (S.tab === 'stats' && run === allRun) renderStats();
+        } catch (e) { failed = true; if (e.net) { S.monthStale = true; S.sync = 'off'; } }
+      }));
+    } catch (e) {
+      if (e.server && e.message === 'unknown_action') {   // older backend: use the slower all-in-one call
+        try { const r = await api('GET', { action: 'all', today: todayIso() }); S.legacy = { months: r.all.months, rate: r.all.rate }; failed = false; }
+        catch (e2) { failed = true; if (e2.net) { S.monthStale = true; S.sync = 'off'; } }
+      } else { failed = true; if (e.net) { S.monthStale = true; S.sync = 'off'; } }
+    }
+    S.allError = failed && !allData().months.length;
+    if (failed) S.allAt = 0;
     S.loading.all = false; if (S.tab === 'stats') renderStats(); renderHeader();
   }
   function refreshCurrent() {
@@ -276,7 +317,7 @@
     render();
     toast(S.online ? t('saved') : t('queued'), 'success');
     await flushQueue();
-    loadDay(op.date);
+    S.allAt = 0; setTimeout(() => loadAll(), 300);
   }
   async function removeItem(kind, i, amount, logId) {
     if (!S.online) { toast(t('offline_delete'), 'error'); return; }
@@ -362,7 +403,7 @@
     root.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => { S.lang = b.dataset.lang; LS.set('lang', S.lang); document.documentElement.lang = S.lang; closeDialog(); render(); openSettings(); });
     root.querySelector('#testBtn').onclick = async () => { const el = root.querySelector('#testRes'); el.textContent = '…'; try { await api('GET', { action: 'ping' }); el.textContent = '✓ ' + t('conn_ok'); } catch (e) { el.textContent = '✕ ' + t('conn_bad'); } };
     root.querySelector('#shareBtn').onclick = async () => { const link = shareLink(); try { await navigator.clipboard.writeText(link); toast(t('copied'), 'success'); } catch (e) { window.prompt(t('share_code'), link); } };
-    root.querySelector('#discBtn').onclick = () => { if (S.queue.length && !confirm('Ai ' + S.queue.length + ' sume netrimise. Sigur deconectezi?')) return; LS.del('cfg'); LS.del('days'); LS.del('queue'); LS.del('months'); LS.del('years'); LS.del('all'); location.reload(); };
+    root.querySelector('#discBtn').onclick = () => { if (S.queue.length && !confirm('Ai ' + S.queue.length + ' sume netrimise. Sigur deconectezi?')) return; LS.del('cfg'); LS.del('days'); LS.del('queue'); LS.del('months'); LS.del('years'); LS.del('cm'); LS.del('idx'); location.reload(); };
   }
 
   // ---------- rendering ----------
@@ -394,7 +435,7 @@
       <button class="sync ${cls}" id="syncBtn" aria-label="${esc(label)}">${ico(icon, 's16')}<span>${esc(label)}</span></button>
       <button class="btn-icon" id="setBtn" aria-label="${esc(t('settings'))}">${ico('settings')}</button>`;
     h.querySelector('#setBtn').onclick = openSettings;
-    h.querySelector('#syncBtn').onclick = () => { flushQueue(); refreshCurrent(); };
+    h.querySelector('#syncBtn').onclick = () => { flushQueue(); if (S.tab === 'stats') loadAll(true); refreshCurrent(); };
   }
 
   // ----- Add view -----
@@ -491,10 +532,10 @@
   }
 
   // ----- Statistics (day / month / year / total) -----
-  const statsCtx = () => ({ lang: S.lang, esc, money, eur, ico, today: todayIso(), rate: (S.all && S.all.rate) || null, fmtDay: fmtShort, fmtMonth, monthName, monthShort: ym => monthName(ym).slice(0, 3).replace('.', '') });
+  const statsCtx = () => ({ lang: S.lang, esc, money, eur, ico, today: todayIso(), rate: allData().rate || null, fmtDay: fmtShort, fmtMonth, monthName, monthShort: ym => monthName(ym).slice(0, 3).replace('.', '') });
   function renderStats() {
     const main = document.getElementById('main'); if (!main) return;
-    const X = statsCtx(), B = window.BZStats.build(X), T = B.T, P = window.BZStats.prep(S.all);
+    const X = statsCtx(), B = window.BZStats.build(X), T = B.T, P = window.BZStats.prep(allData());
     const views = [['day', T.day], ['month', T.month], ['year', T.year], ['total', T.total]];
     const seg = `<div class="seg" role="tablist" aria-label="Statistici">${views.map(([k, l]) => `<button role="tab" data-sv="${k}" aria-selected="${S.sv === k}">${esc(l)}</button>`).join('')}</div>`;
     let title = '', stepper = true;
@@ -504,7 +545,7 @@
     else { title = T.total; stepper = false; }
     const head = stepper ? `<div class="mhead"><button class="step" id="sPrev" aria-label="‹">${ico('arrow-left')}</button><div class="title">${esc(title)}</div><button class="step" id="sNext" aria-label="›">${ico('arrow-right')}</button></div>` : '';
     let body = '';
-    const waiting = !S.all;
+    const waiting = !allData().months.length;
     if (waiting) body = S.loading.all || !S.allError ? '<div class="skeleton" style="height:120px"></div><div class="skeleton"></div>' : `<div class="note-box err">${ico('alert')}<div>${esc(T.err)}<div style="margin-top:8px"><button class="btn secondary" id="retryBtn">${esc(T.retry)}</button></div></div></div>`;
     else if (S.sv === 'day') {
       const v = dayView(S.date);
@@ -526,7 +567,7 @@
     };
     const pv = main.querySelector('#sPrev'); if (pv) { pv.onclick = step(-1); main.querySelector('#sNext').onclick = step(1); }
     const mk = main.querySelector('#mkBtn'); if (mk) mk.onclick = () => createMonth(mk.dataset.ym);
-    const rt = main.querySelector('#retryBtn'); if (rt) rt.onclick = loadAll;
+    const rt = main.querySelector('#retryBtn'); if (rt) rt.onclick = () => loadAll(true);
     const oa = main.querySelector('#openAdd'); if (oa) oa.onclick = () => { S.tab = 'add'; render(); loadDay(S.date); window.scrollTo(0, 0); };
     const go = (v, fn) => { S.sv = v; LS.set('sv', v); fn(); renderStats(); window.scrollTo(0, 0); };
     main.querySelectorAll('[data-date]').forEach(b => b.addEventListener('click', () => go('day', () => { S.date = b.dataset.date; loadDay(S.date); })));
@@ -565,7 +606,7 @@
     }
     keepInUrl();
     render();
-    if (S.cfg) { flushQueue().then(() => { loadDay(S.date); if (S.tab === 'stats') loadAll(); }); loadDay(S.date); }
+    if (S.cfg) { loadDay(S.date); flushQueue(); setTimeout(() => loadAll(), 400); }
   }
   // setup code can arrive in the URL (#s=BZ1.xxx) so one tap opens a ready-to-connect phone
   (function fromUrl() {
